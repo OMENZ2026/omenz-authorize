@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omenz-authorize"
+version = "0.1.0"
+description = "Run OMENZ Authorize (APPROVE/REVIEW/DECLINE + signed authorization) before every x402 payment your agent makes."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["x402", "agents", "payments", "authorization", "usdc", "base"]
+
+[project.urls]
+Homepage = "https://omenz.org"
+Source = "https://github.com/OMENZ2026/omenz-authorize"
+
+[tool.setuptools]
+packages = ["omenz_authorize"]
