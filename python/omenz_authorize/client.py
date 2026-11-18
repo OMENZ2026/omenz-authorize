@@ -59,3 +59,67 @@ class AuthorizedPayer:
         if resp.status_code < 400 and amt:
             self.spent_today_usd += float(amt)
         return resp, res
+
+
+# ---------------------------------------------------------------- OMENZ Checkout (0.2.0)
+CHECKOUT_BASE = "https://www.omenz.org/api/tollbooth/v1/checkout"
+
+
+class CheckoutStopped(Exception):
+    def __init__(self, result):
+        super().__init__(f"OMENZ Checkout {result.get('decision')}: " + "; ".join(result.get("reasons") or ["no reason given"]))
+        self.kind = result.get("decision")
+        self.result = result
+
+
+class CheckoutPayer:
+    """The whole OMENZ buyer layer around every payment: checkout/open -> pay only on GO -> checkout/close
+    (settlement verified on Base, delivery checked, signed receipt, budget refund if unpaid, seller record).
+
+        buyer = CheckoutPayer(paying_session, max_price_usd=0.05, budget_id="bg_...", budget_key="...", agent="worker-3")
+        resp, data, checkout, receipt = buyer.request("GET", "https://api.example.com/x402/price")
+        resp, data, checkout, receipt = buyer.request("GET", q="token price")  # OMENZ picks the cheapest working seller
+    """
+
+    def __init__(self, session, max_price_usd=None, expected_pay_to=None, policy=None, budget_id=None, budget_key=None,
+                 agent=None, job_id=None, allow_review=False, credit_id=None, credit_key=None, base=CHECKOUT_BASE, on_checkout=None):
+        self.session = session
+        self.defaults = {"max_price_usd": max_price_usd, "expected_pay_to": expected_pay_to, "policy": policy,
+                         "budget_id": budget_id, "agent": agent, "job_id": job_id}
+        self.credit = {"X-Credit-Id": credit_id, "X-Credit-Key": credit_key} if credit_id and credit_key else None
+        self.headers = {**({"X-Budget-Key": budget_key} if budget_key else {}), **(self.credit or {})}
+        self.allow_review, self.base, self.on_checkout = allow_review, base, on_checkout
+
+    def _call(self, side, body, timeout=60):
+        url = f"{self.base}/{side}" + ("/credit" if self.credit else "")
+        r = self.session.request("POST", url, json={k: v for k, v in body.items() if v is not None}, headers=self.headers, timeout=timeout)
+        if r.status_code == 402:
+            raise RuntimeError("the session did not pay OMENZ Checkout (is it an x402-paying session with USDC on Base?)")
+        if r.status_code >= 400:
+            raise RuntimeError(f"OMENZ Checkout error {r.status_code}: {r.text[:300]}")
+        return r.json()
+
+    def request(self, method="GET", url=None, q=None, purpose=None, **kwargs):
+        opened = self._call("open", {**self.defaults, "url": url, "q": None if url else q, "method": method.upper(), "purpose": purpose})
+        if self.on_checkout:
+            self.on_checkout("open", opened)
+        if opened.get("decision") == "STOP" or (opened.get("decision") == "REVIEW" and not self.allow_review):
+            raise CheckoutStopped(opened)
+        try:
+            resp = self.session.request(method, opened["pay"]["url"], **kwargs)
+        except Exception:
+            try:
+                self._call("close", {"checkout_id": opened["checkout_id"], "not_paid": True})
+            finally:
+                raise
+        try:
+            data = resp.json()
+        except Exception:
+            data = resp.text
+        pr = resp.headers.get("payment-response") or resp.headers.get("x-payment-response")
+        body = {"checkout_id": opened["checkout_id"], "delivered": data}
+        body.update({"payment_response": pr} if pr else {"not_paid": resp.status_code != 200})
+        receipt = self._call("close", body)
+        if self.on_checkout:
+            self.on_checkout("close", receipt)
+        return resp, data, opened, receipt

@@ -12,6 +12,41 @@ You get **APPROVE / REVIEW / DECLINE**, the reasons, and a signed 5-minute autho
 
 Your keys stay in your process. OMENZ never holds funds.
 
+## NEW in 0.2.0: OMENZ Checkout (the whole buyer layer, one wrapper)
+
+`checkoutFetch` / `CheckoutPayer` wrap your paying fetch/session so **every purchase** gets:
+
+- **Before paying** (`checkout/open`):
+  - the cheapest seller that answers right now, if you only say what you need (`{ q: "token price" }`)
+  - Authorize
+  - the seller's OMENZ track record
+  - a draw from your team's **Shared Budget**
+
+  You get GO / REVIEW / STOP. The library only pays on GO.
+- **After paying** (`checkout/close`):
+  - settlement verified on Base
+  - delivery checked against what the seller advertised
+  - a **signed receipt**
+  - the money goes back to the budget if the payment never happened
+  - the seller's track record is updated
+
+Price: $0.002 per side over x402. High volume: buy prepaid credits once (`POST /v1/credits/buy-1`) and pass `creditId/creditKey` (`credit_id/credit_key`). Each side then costs **1% of the purchase, minimum $0.0002**, with no per-call settlement.
+
+```js
+import { checkoutFetch } from "omenz-authorize/js/index.js";
+const buy = checkoutFetch(fetchWithPayment, { maxPriceUsd: 0.05, budgetId, budgetKey, agent: "worker-3" });
+const { data, receipt } = await buy({ q: "token price" });          // OMENZ picks the seller
+const r = await buy("https://api.example.com/x402/search", { method: "POST", body: JSON.stringify({ q: "x" }) });
+```
+
+```python
+from omenz_authorize import CheckoutPayer, CheckoutStopped
+buyer = CheckoutPayer(paying_session, max_price_usd=0.05, budget_id="bg_...", budget_key="...", agent="worker-3")
+resp, data, checkout, receipt = buyer.request("GET", q="token price")
+```
+
+A team budget is one call: `POST https://www.omenz.org/api/tollbooth/v1/budget/create {"cap_usd": 2, "period": "day"}`. It gives every agent the `spender_key`. OMENZ keeps the count and never holds money.
+
 ## Python
 
 ```bash
@@ -49,7 +84,7 @@ https://www.omenz.org/api/tollbooth/ayne/v1/authorize
 
 ## Links
 
-- API and all 62 tools: https://www.omenz.org/openapi.json
+- API and all tools: https://www.omenz.org/openapi.json
 - MCP: https://www.omenz.org/mcp
 - Pricing policy (errors are not charged): https://www.omenz.org/api/tollbooth/v1/pricing-policy
 

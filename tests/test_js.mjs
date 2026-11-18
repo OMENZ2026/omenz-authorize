@@ -1,4 +1,4 @@
-import { authorizedFetch, AuthorizationError } from "../js/index.js";
+import { authorizedFetch, AuthorizationError, checkoutFetch, CheckoutStopped } from "../js/index.js";
 
 const mk = (decision) => {
   const calls = [];
@@ -32,5 +32,29 @@ let ok = 0;
   await authorizedFetch(f, { allowReview: true })("https://x.example/api");
   ok += calls.length === 2 ? 1 : 0;
 }
-console.log(ok, "/ 4");
-process.exit(ok === 4 ? 0 : 1);
+{
+  const mkc = (decision) => {
+    const calls = [];
+    const f = async (url, init = {}) => {
+      calls.push([url, init]);
+      let body;
+      if (url.includes("/checkout/open")) body = { decision, checkout_id: "ck_1", reasons: ["r"], pay: { url: "https://seller.example/api" } };
+      else if (url.includes("/checkout/close")) body = { verdict: "GOOD_BUY", signed_receipt: "tok", sent: JSON.parse(init.body) };
+      else body = { price: 1 };
+      const headers = { get: (h) => (h === "payment-response" && url.startsWith("https://seller") ? "eyJ0cmFuc2FjdGlvbiI6IjB4MSJ9" : null) };
+      return { status: 200, headers, json: async () => body, text: async () => JSON.stringify(body), clone() { return this; } };
+    };
+    return { f, calls };
+  };
+  const { f, calls } = mkc("GO");
+  const r = await checkoutFetch(f, { maxPriceUsd: 0.01, budgetKey: "k" })({ q: "token price" });
+  ok += r.receipt.verdict === "GOOD_BUY" && r.receipt.sent.payment_response && r.data.price === 1 && calls.length === 3
+        && calls[0][1].headers["x-budget-key"] === "k" ? 1 : 0;
+  const s = mkc("STOP");
+  try { await checkoutFetch(s.f)("https://seller.example/api"); } catch (e) { ok += e instanceof CheckoutStopped && s.calls.length === 1 ? 1 : 0; }
+  const c = mkc("GO");
+  await checkoutFetch(c.f, { creditId: "c", creditKey: "k" })("https://seller.example/api");
+  ok += c.calls[0][0].endsWith("/checkout/open/credit") && c.calls[2][0].endsWith("/checkout/close/credit") ? 1 : 0;
+}
+console.log(ok, "/ 7");
+process.exit(ok === 7 ? 0 : 1);
