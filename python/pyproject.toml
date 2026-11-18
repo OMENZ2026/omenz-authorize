@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omenz-authorize"
-version = "0.2.0"
+version = "0.3.0"
 description = "Run OMENZ Authorize (APPROVE/REVIEW/DECLINE + signed authorization) before every x402 payment your agent makes."
 requires-python = ">=3.9"
 license = { text = "MIT" }

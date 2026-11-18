@@ -12,6 +12,37 @@ You get **APPROVE / REVIEW / DECLINE**, the reasons, and a signed 5-minute autho
 
 Your keys stay in your process. OMENZ never holds funds.
 
+## NEW in 0.3.0: Transaction Guard: the OMENZ commerce control plane in one wrapper
+
+`guardFetch` / `GuardPayer` run every payment your agent makes through **one OMENZ call before money moves** (`POST /v1/guard`, $0.05):
+- budget authorized
+- counterparty checked
+- **duplicate payment** checked (OMENZ records + your on-chain history)
+- quoted price unchanged
+- settlement economics
+- expected delivery recorded
+
+It pays only on **GO**. Then it closes with a verified receipt: settled → delivery verified → signed receipt.
+
+If the paid request **throws** (timeout or network error), it calls **Settlement Rescue** for you. You get SETTLED / NOT_SETTLED / STILL_UNCERTAIN, so your agent never re-pays blind.
+
+Don't know which seller to use? Pass `{ need: "token price" }`. The OMENZ Market job desk picks the working provider and guards it.
+
+Larger purchases on prepaid credits are value-priced at **10 bps of the protected value** (min $0.01, max $5).
+
+```js
+import { guardFetch } from "omenz-authorize/js/index.js";
+const buy = guardFetch(fetchWithPayment, { payer: myWallet, maxPriceUsd: 0.05, budgetId, budgetKey });
+const { data, receipt } = await buy("https://api.example.com/x402/price", { purpose: "BTC price", quotedPriceUsd: 0.003 });
+const r2 = await buy({ need: "token price" });
+```
+
+```python
+from omenz_authorize import GuardPayer, GuardStopped
+buyer = GuardPayer(paying_session, payer="0xYourWallet", max_price_usd=0.05, budget_id="bg_...", budget_key="...")
+resp, data, guard, receipt = buyer.request("GET", "https://api.example.com/x402/price", purpose="BTC price")
+```
+
 ## NEW in 0.2.0: OMENZ Checkout (the whole buyer layer, one wrapper)
 
 `checkoutFetch` / `CheckoutPayer` wrap your paying fetch/session so **every purchase** gets:

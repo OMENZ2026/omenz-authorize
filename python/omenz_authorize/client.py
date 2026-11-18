@@ -123,3 +123,86 @@ class CheckoutPayer:
         if self.on_checkout:
             self.on_checkout("close", receipt)
         return resp, data, opened, receipt
+
+
+# ---------------------------------------------------------------- OMENZ Transaction Guard / Control Plane (0.3.0)
+OMENZ_V1 = "https://www.omenz.org/api/tollbooth/v1"
+
+
+class GuardStopped(Exception):
+    def __init__(self, result):
+        super().__init__(f"OMENZ Guard {result.get('decision')}: " + "; ".join(result.get("reasons") or ["no reason given"]))
+        self.kind = result.get("decision")
+        self.result = result
+
+
+class GuardPayer:
+    """Every payment: POST /v1/guard (budget, seller, price, duplicate, economics, delivery) -> pay only on GO ->
+    checkout/close (verified settlement + delivery + signed receipt). A paid request that raises triggers Settlement
+    Rescue (attached to the exception as .omenz_rescue) so the agent never re-pays blind.
+
+        buyer = GuardPayer(paying_session, payer="0xYourWallet", max_price_usd=0.05, budget_id="bg_...", budget_key="...")
+        resp, data, guard, receipt = buyer.request("GET", "https://api.example.com/x402/price", purpose="BTC price")
+        resp, data, guard, receipt = buyer.request("GET", need="token price")
+    """
+
+    def __init__(self, session, payer=None, max_price_usd=None, budget_id=None, budget_key=None, agent=None,
+                 allow_caution=False, credit_id=None, credit_key=None, base=OMENZ_V1, on_event=None):
+        self.session, self.payer, self.max_price_usd, self.budget_id, self.agent = session, payer, max_price_usd, budget_id, agent
+        self.allow_caution, self.base, self.on_event = allow_caution, base, on_event
+        self.credit = bool(credit_id and credit_key)
+        self.headers = {**({"X-Budget-Key": budget_key} if budget_key else {}),
+                        **({"X-Credit-Id": credit_id, "X-Credit-Key": credit_key} if self.credit else {})}
+
+    def _call(self, path, body, timeout=90):
+        r = self.session.request("POST", f"{self.base}/{path}", json={k: v for k, v in body.items() if v is not None},
+                                 headers=self.headers, timeout=timeout)
+        if r.status_code == 402:
+            raise RuntimeError("the session did not pay OMENZ (is it an x402-paying session with USDC on Base?)")
+        if r.status_code >= 400:
+            raise RuntimeError(f"OMENZ error {r.status_code}: {r.text[:300]}")
+        return r.json()
+
+    def _ev(self, kind, x):
+        if self.on_event:
+            self.on_event(kind, x)
+
+    def request(self, method="GET", url=None, need=None, purpose=None, quoted_price_usd=None, **kwargs):
+        if url:
+            g = self._call("guard/credit" if self.credit else "guard", {"url": url, "method": method.upper(), "payer": self.payer,
+                           "max_price_usd": self.max_price_usd, "quoted_price_usd": quoted_price_usd, "budget_id": self.budget_id,
+                           "agent": self.agent, "purpose": purpose})
+        else:
+            job = self._call("market/job/guarded", {"need": need, "max_price_usd": self.max_price_usd, "payer": self.payer,
+                                                    "budget_id": self.budget_id, "purpose": purpose})
+            g = dict(job.get("guard") or {})
+            g["market"] = job
+            if not job.get("pick"):
+                g.update({"decision": "STOP", "reasons": ["no working provider found"]})
+            elif not g.get("pay"):
+                g["pay"] = {"url": job["pick"]["url"], "method": job["pick"].get("method")}
+        self._ev("guard", g)
+        if g.get("decision") == "STOP" or (g.get("decision") == "CAUTION" and not self.allow_caution):
+            raise GuardStopped(g)
+        pay = g["pay"]
+        try:
+            resp = self.session.request(method, pay["url"], **kwargs)
+        except Exception as e:
+            try:
+                e.omenz_rescue = self._call("settlement/rescue", {"payer": self.payer, "pay_to": pay.get("pay_to"), "amount_usd": pay.get("amount_usd")})
+                self._ev("rescue", e.omenz_rescue)
+            except Exception:
+                pass
+            raise
+        try:
+            data = resp.json()
+        except Exception:
+            data = resp.text
+        pr = resp.headers.get("payment-response") or resp.headers.get("x-payment-response")
+        receipt = None
+        if g.get("checkout_id"):
+            body = {"checkout_id": g["checkout_id"], "delivered": data}
+            body.update({"payment_response": pr} if pr else {"not_paid": resp.status_code != 200})
+            receipt = self._call("checkout/close/credit" if self.credit else "checkout/close", body)
+        self._ev("close", receipt)
+        return resp, data, g, receipt

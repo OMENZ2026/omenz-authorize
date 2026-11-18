@@ -101,3 +101,62 @@ export function checkoutFetch(payingFetch, opts = {}) {
     return { response, data, checkout: opened, receipt };
   };
 }
+
+// ---------------------------------------------------------------- OMENZ Transaction Guard / Control Plane (0.3.0)
+// One wrapper = every payment your agent makes goes AUTHORITY -> BUDGET -> SELLER -> PRICE -> DUPLICATE CHECK
+// (POST /v1/guard) -> pay only on GO -> SETTLED -> DELIVERY VERIFIED -> RECEIPT (checkout/close).
+// If the paid request throws (timeout / network), it asks Settlement Rescue before you ever pay again.
+//
+//   import { guardFetch } from "omenz-authorize";
+//   const buy = guardFetch(fetchWithPayment, { payer: myWalletAddress, maxPriceUsd: 0.05, budgetId, budgetKey });
+//   const { data, receipt, guard } = await buy("https://api.example.com/x402/price", { purpose: "BTC price" });
+//   const r2 = await buy({ need: "token price" });   // OMENZ Market picks the working seller, then guards it
+
+export const OMENZ_V1 = "https://www.omenz.org/api/tollbooth/v1";
+
+export class GuardStopped extends Error {
+  constructor(result) {
+    super(`OMENZ Guard ${result.decision}: ${(result.reasons || []).join("; ") || "no reason given"}`);
+    this.kind = result.decision;
+    this.result = result;
+  }
+}
+
+export function guardFetch(payingFetch, opts = {}) {
+  const { payer, maxPriceUsd, budgetId, budgetKey, agent, allowCaution = false, creditId, creditKey, base = OMENZ_V1, onEvent } = opts;
+  const credit = creditId && creditKey ? { "x-credit-id": creditId, "x-credit-key": creditKey } : null;
+  const hdr = { ...(budgetKey ? { "x-budget-key": budgetKey } : {}), ...(credit || {}) };
+  const call = (path, body) => omenz(payingFetch, `${base}/${path}`, body, hdr);
+  return async function buy(target, init = {}) {
+    const { purpose, quotedPriceUsd, ...fetchInit } = init;
+    let g;
+    if (typeof target === "string") {
+      g = await call(credit ? "guard/credit" : "guard", { url: target, method: (fetchInit.method || "GET").toUpperCase(), payer,
+        max_price_usd: maxPriceUsd, quoted_price_usd: quotedPriceUsd, budget_id: budgetId, agent, purpose });
+    } else {
+      const job = await call("market/job/guarded", { need: target.need || target.q, max_price_usd: maxPriceUsd, payer, budget_id: budgetId, purpose });
+      g = { ...(job.guard || {}), market: job };
+      if (!job.pick) g = { decision: "STOP", reasons: ["no working provider found"], market: job };
+      else if (!g.pay) g.pay = { url: job.pick.url, method: job.pick.method };
+    }
+    if (onEvent) await onEvent("guard", g);
+    if (g.decision === "STOP" || (g.decision === "CAUTION" && !allowCaution)) throw new GuardStopped(g);
+    let response;
+    try {
+      response = await payingFetch(g.pay.url, fetchInit);
+    } catch (e) {
+      const rescue = await call("settlement/rescue", { payer, pay_to: g.pay.pay_to, amount_usd: g.pay.amount_usd }).catch(() => null);
+      if (onEvent) await onEvent("rescue", rescue);
+      e.omenzRescue = rescue;
+      throw e;
+    }
+    let data = null;
+    try { data = await response.clone().json(); } catch { try { data = await response.clone().text(); } catch {} }
+    const pr = response.headers && (response.headers.get("payment-response") || response.headers.get("x-payment-response"));
+    const receipt = g.checkout_id ? await call(credit ? "checkout/close/credit" : "checkout/close",
+      pr ? { checkout_id: g.checkout_id, payment_response: pr, delivered: data }
+         : { checkout_id: g.checkout_id, not_paid: response.status !== 200, delivered: data }) : null;
+    if (onEvent) await onEvent("close", receipt);
+    return { response, data, guard: g, receipt };
+  };
+}
