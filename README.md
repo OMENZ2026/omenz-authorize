@@ -2,7 +2,7 @@
 
 Run **OMENZ Authorize** before every x402 payment your agent makes.
 
-One call ($0.001, paid over x402 with your same wallet) checks the payment before money moves:
+One call ($0.002, paid over x402 with your same wallet) checks the payment before money moves:
 - **Endpoint:** up and answering with valid x402 requirements.
 - **Price:** within your max, and **fair** compared with similar x402 endpoints.
 - **Recipient:** the pay-to address is a **known x402 seller** (catches swapped wallets) or matches the one you expect.
