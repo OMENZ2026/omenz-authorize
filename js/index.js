@@ -160,3 +160,25 @@ export function guardFetch(payingFetch, opts = {}) {
     return { response, data, guard: g, receipt };
   };
 }
+
+
+export const SEND_CHECK_URL = "https://www.omenz.org/api/tollbooth/v1/send/check";
+
+// OMENZ Send Check ($0.005 over x402) before your agent sends USDC/ETH on Base: SEND / CAUTION / STOP.
+// STOP (sanctioned recipient, address poisoning vs your past payees, token-contract recipient, low balance) throws;
+// CAUTION throws too unless allowCaution. Never signs or moves money.
+export async function sendCheck(payingFetch, { to, amount, asset = "USDC", from, allowCaution = false, url = SEND_CHECK_URL } = {}) {
+  const body = { to, asset };
+  if (amount !== undefined) body.amount = amount;
+  if (from) body.from = from;
+  const r = await payingFetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 402) throw new Error("the fetch did not pay OMENZ Send Check (is it an x402-paying fetch with USDC on Base?)");
+  if (r.status >= 400) throw new Error(`OMENZ Send Check error ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const res = await r.json();
+  if (res.verdict === "STOP" || (res.verdict === "CAUTION" && !allowCaution)) {
+    const e = new Error(`OMENZ Send Check ${res.verdict}: ${(res.stop_reasons || res.caution_reasons || []).join("; ")}`);
+    e.result = res;
+    throw e;
+  }
+  return res;
+}

@@ -13,6 +13,23 @@ You get **APPROVE / REVIEW / DECLINE**, the reasons, and a signed 5-minute autho
 
 Your keys stay in your process. OMENZ never holds funds.
 
+## NEW in 0.4.0: Send Check before your agent sends money
+
+`send_check()` / `sendCheck()` calls OMENZ Send Check ($0.005) before your agent sends USDC or ETH on Base:
+- **STOP**: the recipient is OFAC-sanctioned, is the token contract itself (funds lost), is a **lookalike of a payee you used before** (address poisoning: same first and last 4 characters, different address), or the balance can't cover it.
+- **CAUTION**: the recipient is a contract or an address that has never sent a transaction.
+- **SEND**: none of the above.
+
+```python
+from omenz_authorize import send_check, SendStopped
+send_check(paying_session, to="0xRecipient", amount=25, asset="USDC", sender="0xYourWallet")  # raises SendStopped on STOP / CAUTION
+```
+
+```js
+import { sendCheck } from "omenz-authorize/js/index.js";
+await sendCheck(fetchWithPayment, { to: "0xRecipient", amount: 25, asset: "USDC", from: "0xYourWallet" });
+```
+
 ## NEW in 0.3.0: Transaction Guard: the OMENZ commerce control plane in one wrapper
 
 `guardFetch` / `GuardPayer` run every payment your agent makes through **one OMENZ call before money moves** (`POST /v1/guard`, $0.05):

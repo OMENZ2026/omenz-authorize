@@ -16,7 +16,7 @@ class AuthorizationNeedsReview(Exception):
 
 
 def authorize(session, url, method="GET", authorize_url=AUTHORIZE_URL, timeout=30, **checks):
-    """Ask OMENZ Authorize about a payment. `session` pays the $0.001 authorization over x402.
+    """Ask OMENZ Authorize about a payment. `session` pays the $0.002 authorization over x402.
     checks: max_price_usd, expected_pay_to, networks, policy, spend, passport_token, tool."""
     body = {"url": url, "method": method.upper(), **{k: v for k, v in checks.items() if v is not None}}
     r = session.request("POST", authorize_url, json=body, timeout=timeout)
@@ -206,3 +206,28 @@ class GuardPayer:
             receipt = self._call("checkout/close/credit" if self.credit else "checkout/close", body)
         self._ev("close", receipt)
         return resp, data, g, receipt
+
+
+SEND_CHECK_URL = "https://www.omenz.org/api/tollbooth/v1/send/check"
+
+
+class SendStopped(Exception):
+    def __init__(self, result):
+        super().__init__("OMENZ Send Check STOP: " + "; ".join(result.get("stop_reasons") or ["no reason given"]))
+        self.result = result
+
+
+def send_check(session, to, amount=None, asset="USDC", sender=None, allow_caution=False, url=SEND_CHECK_URL, timeout=30):
+    """Ask OMENZ Send Check before your agent sends USDC/ETH on Base ($0.005 over x402, paid by `session`).
+    STOP (sanctioned recipient, address poisoning vs your past payees, token-contract recipient, low balance) raises SendStopped;
+    CAUTION raises too unless allow_caution=True. Returns the full verdict. Never signs or moves money."""
+    body = {"to": to, "asset": asset, **({"amount": amount} if amount is not None else {}), **({"from": sender} if sender else {})}
+    r = session.request("POST", url, json=body, timeout=timeout)
+    if r.status_code == 402:
+        raise RuntimeError("the session did not pay OMENZ Send Check (is it an x402-paying session with USDC on Base?)")
+    if r.status_code >= 400:
+        raise RuntimeError(f"OMENZ Send Check error {r.status_code}: {r.text[:300]}")
+    res = r.json()
+    if res.get("verdict") == "STOP" or (res.get("verdict") == "CAUTION" and not allow_caution):
+        raise SendStopped(res)
+    return res
