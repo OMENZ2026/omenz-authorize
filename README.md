@@ -6,6 +6,7 @@ One call ($0.002, paid over x402 with your same wallet) checks the payment befor
 - **Endpoint:** up and answering with valid x402 requirements.
 - **Price:** within your max, and **fair** compared with similar x402 endpoints.
 - **Recipient:** the pay-to address is a **known x402 seller** (catches swapped wallets) or matches the one you expect.
+- **Sanctions:** the pay-to address is screened against OFAC's sanctioned crypto addresses (US Treasury SDN list, refreshed weekly). A sanctioned payee is an automatic DECLINE.
 - **Your rules:** the owner's spend policy (caps, allowlists) and Permission Passport, if you send them.
 
 You get **APPROVE / REVIEW / DECLINE**, the reasons, and a signed 5-minute authorization for your ledger. Anyone can verify it offline with the OMENZ public key at https://www.omenz.org/api/tollbooth/v1/passport/key.
@@ -107,6 +108,10 @@ import { authorizedFetch } from "omenz-authorize/js/index.js";
 const pay = authorizedFetch(fetchWithPayment, { maxPriceUsd: 0.05, policy: { daily_cap_usd: 5 } });
 const { response, authorization } = await pay("https://api.example.com/x402/search", { method: "POST", body: JSON.stringify({ q: "x" }) });
 ```
+
+## Quickstart
+
+First five minutes (try free, see the 402, pay with the x402 client, buy safely): https://www.omenz.org/agents/
 
 ## Try it free
 
