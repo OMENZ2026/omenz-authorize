@@ -1,6 +1,6 @@
 {
   "name": "omenz-authorize",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Run OMENZ Authorize (APPROVE/REVIEW/DECLINE + signed authorization) before every x402 payment your agent makes.",
   "type": "module",
   "main": "js/index.js",

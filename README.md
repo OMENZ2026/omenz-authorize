@@ -142,3 +142,26 @@ https://www.omenz.org/api/tollbooth/ayne/v1/authorize
 - Pricing policy (errors are not charged): https://www.omenz.org/api/tollbooth/v1/pricing-policy
 
 MIT licensed. By OMENZ (https://omenz.org).
+
+## Prepaid credits and Job Jackets (0.5.0)
+
+**Credits:** pay once, then check many payments with no per-check settlement (Authorize at 2% of the checked payment, min $0.0003).
+
+```python
+from omenz_authorize import Credits
+c = Credits.buy(paying_session, dollars=1)          # one $1 x402 payment; keep c.credit_key secret (shown once)
+res = c.authorize(requests.Session(), "https://api.example.com/x402/search", max_price_usd=0.05)
+print(c.balance(requests.Session()))
+```
+
+**Job Jacket:** the minimum working state for one job. A worker checks it out for a shift (with a lease) and checks it back in as a new version. The next worker resumes in one call. $0.002 per call.
+
+```python
+from omenz_authorize import Jacket
+j = Jacket.create(paying_session, objective="reconcile November invoices", state={"done": []})
+work = j.checkout(paying_session, worker="agent-7")
+j.checkin(paying_session, worker="agent-7", state_patch={"done": ["inv-1"]}, checkpoint="inv-1 matched")
+```
+
+JS: `Credits.buy(payingFetch, 1)`, `credits.authorize(fetch, url)`, `Jacket.create(payingFetch, objective)`, `jacket.checkout(payingFetch, worker)`, `jacket.checkin(payingFetch, worker, { state_patch })`.
+Try both free first: pass `base="https://www.omenz.org/api/tollbooth/ayne/v1"` (tests/test_jacket_credits.py, tests/test_jacket.mjs).

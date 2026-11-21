@@ -231,3 +231,87 @@ def send_check(session, to, amount=None, asset="USDC", sender=None, allow_cautio
     if res.get("verdict") == "STOP" or (res.get("verdict") == "CAUTION" and not allow_caution):
         raise SendStopped(res)
     return res
+
+
+TOLLBOOTH = "https://www.omenz.org/api/tollbooth/v1"
+
+
+def _ok(r, what):
+    if r.status_code == 402:
+        raise RuntimeError(f"the session did not pay {what} (is it an x402-paying session with USDC on Base?)")
+    if r.status_code >= 400:
+        raise RuntimeError(f"{what} error {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+class Credits:
+    """OMENZ prepaid credits: pay once ($1 or $5 over x402), then run Authorize from the balance at 2% of the checked
+    payment (min $0.0003) with no per-check settlement. Keep credit_key secret: it's shown once.
+
+        c = Credits.buy(paying_session, dollars=1)        # one x402 payment
+        res = c.authorize(plain_session, "https://api.example.com/x402/search", max_price_usd=0.05)
+        c.balance(plain_session)
+    """
+
+    def __init__(self, credit_id, credit_key, base=TOLLBOOTH):
+        self.credit_id, self.credit_key, self.base = credit_id, credit_key, base
+
+    @property
+    def _h(self):
+        return {"X-Credit-Id": self.credit_id, "X-Credit-Key": self.credit_key}
+
+    @classmethod
+    def buy(cls, paying_session, dollars=1, base=TOLLBOOTH, timeout=60):
+        if dollars not in (1, 5):
+            raise ValueError("dollars must be 1 or 5")
+        d = _ok(paying_session.request("POST", f"{base}/credits/buy-{dollars}", json={}, timeout=timeout), "OMENZ credits")
+        return cls(d["credit_id"], d["credit_key"], base)
+
+    def balance(self, session, timeout=30):
+        return _ok(session.request("GET", f"{self.base}/credits/balance", headers=self._h, timeout=timeout), "OMENZ credits balance")
+
+    def authorize(self, session, url, method="GET", raise_on_decline=True, allow_review=False, timeout=30, **checks):
+        res = _ok(session.request("POST", f"{self.base}/authorize/credit", headers=self._h,
+                                  json={"url": url, "method": method, **checks}, timeout=timeout), "OMENZ Authorize (credits)")
+        if raise_on_decline and res.get("decision") == "DECLINE":
+            raise AuthorizationDeclined(res)
+        if raise_on_decline and res.get("decision") == "REVIEW" and not allow_review:
+            raise AuthorizationNeedsReview(res)
+        return res
+
+
+class Jacket:
+    """OMENZ Job Jacket: the minimum working state for one job, encrypted with a key only you hold.
+    A worker checks it out at the start of a shift (gets a lease) and checks it back in as a new version.
+    Each call is $0.002 over x402, paid by `session`. Never put credentials in a jacket: use reference names.
+
+        j = Jacket.create(session, objective="reconcile November invoices", state={"done": []})
+        work = j.checkout(session, worker="agent-7", fields=["done"])
+        j.checkin(session, worker="agent-7", state_patch={"done": ["inv-1"]}, checkpoint="inv-1 matched")
+    """
+
+    def __init__(self, jacket_id, jacket_key, base=TOLLBOOTH):
+        self.jacket_id, self.jacket_key, self.base = jacket_id, jacket_key, base
+
+    @property
+    def _h(self):
+        return {"X-Jacket-Id": self.jacket_id, "X-Jacket-Key": self.jacket_key}
+
+    @classmethod
+    def create(cls, session, objective, base=TOLLBOOTH, timeout=60, **spec):
+        d = _ok(session.request("POST", f"{base}/jacket/create", json={"objective": objective, **spec}, timeout=timeout), "OMENZ Job Jacket")
+        return cls(d["jacket_id"], d["jacket_key"], base)
+
+    def checkout(self, session, worker, timeout=60, **opts):
+        """opts: fields, max_bytes, lease_minutes, take_over, passport_token."""
+        return _ok(session.request("POST", f"{self.base}/jacket/checkout", headers=self._h, json={"worker": worker, **opts},
+                                   timeout=timeout), "OMENZ Job Jacket checkout")
+
+    def checkin(self, session, worker, ledger_key=None, timeout=60, **update):
+        """update: state_patch (merge; None deletes a key) or state (replace), checkpoint, note."""
+        h = {**self._h, **({"X-Ledger-Key": ledger_key} if ledger_key else {})}
+        return _ok(session.request("POST", f"{self.base}/jacket/checkin", headers=h, json={"worker": worker, **update},
+                                   timeout=timeout), "OMENZ Job Jacket checkin")
+
+    def history(self, session, timeout=30):
+        return _ok(session.request("GET", f"{self.base}/jacket/history", headers=self._h, timeout=timeout), "OMENZ Job Jacket history")

@@ -182,3 +182,42 @@ export async function sendCheck(payingFetch, { to, amount, asset = "USDC", from,
   }
   return res;
 }
+
+async function _ok(r, what) {
+  if (r.status === 402) throw new Error(`the fetch did not pay ${what} (is it an x402-paying fetch with USDC on Base?)`);
+  if (r.status >= 400) throw new Error(`${what} error ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  return r.json();
+}
+const _json = (method, body, headers = {}) => ({ method, headers: { "Content-Type": "application/json", ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
+
+// OMENZ prepaid credits: pay once ($1 or $5), then Authorize from the balance at 2% of the checked payment (min $0.0003).
+export class Credits {
+  constructor(creditId, creditKey, base = OMENZ_V1) { Object.assign(this, { creditId, creditKey, base }); }
+  get headers() { return { "X-Credit-Id": this.creditId, "X-Credit-Key": this.creditKey }; }
+  static async buy(payingFetch, dollars = 1, base = OMENZ_V1) {
+    if (![1, 5].includes(dollars)) throw new Error("dollars must be 1 or 5");
+    const d = await _ok(await payingFetch(`${base}/credits/buy-${dollars}`, _json("POST", {})), "OMENZ credits");
+    return new Credits(d.credit_id, d.credit_key, base);
+  }
+  async balance(fetchFn = fetch) { return _ok(await fetchFn(`${this.base}/credits/balance`, { headers: this.headers }), "OMENZ credits balance"); }
+  async authorize(fetchFn, url, method = "GET", checks = {}, { allowReview = false } = {}) {
+    const res = await _ok(await fetchFn(`${this.base}/authorize/credit`, _json("POST", { url, method, ...checks }, this.headers)), "OMENZ Authorize (credits)");
+    if (res.decision === "DECLINE" || (res.decision === "REVIEW" && !allowReview)) throw new AuthorizationError(res.decision, res);
+    return res;
+  }
+}
+
+// OMENZ Job Jacket: minimum working state for one job; checkout = lease for a shift, checkin = new version. $0.002 per call.
+export class Jacket {
+  constructor(jacketId, jacketKey, base = OMENZ_V1) { Object.assign(this, { jacketId, jacketKey, base }); }
+  get headers() { return { "X-Jacket-Id": this.jacketId, "X-Jacket-Key": this.jacketKey }; }
+  static async create(payingFetch, objective, spec = {}, base = OMENZ_V1) {
+    const d = await _ok(await payingFetch(`${base}/jacket/create`, _json("POST", { objective, ...spec })), "OMENZ Job Jacket");
+    return new Jacket(d.jacket_id, d.jacket_key, base);
+  }
+  async checkout(payingFetch, worker, opts = {}) { return _ok(await payingFetch(`${this.base}/jacket/checkout`, _json("POST", { worker, ...opts }, this.headers)), "OMENZ Job Jacket checkout"); }
+  async checkin(payingFetch, worker, update = {}, ledgerKey) {
+    return _ok(await payingFetch(`${this.base}/jacket/checkin`, _json("POST", { worker, ...update }, { ...this.headers, ...(ledgerKey ? { "X-Ledger-Key": ledgerKey } : {}) })), "OMENZ Job Jacket checkin");
+  }
+  async history(payingFetch) { return _ok(await payingFetch(`${this.base}/jacket/history`, { headers: this.headers }), "OMENZ Job Jacket history"); }
+}

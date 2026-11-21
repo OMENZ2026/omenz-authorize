@@ -12,7 +12,7 @@ Works with whatever x402 client you already use. Pass a requests-compatible sess
 
 No keys leave your process. OMENZ never sees your private key and never holds funds.
 """
-from .client import AuthorizedPayer, AuthorizationDeclined, AuthorizationNeedsReview, authorize, CheckoutPayer, CheckoutStopped, GuardPayer, GuardStopped, send_check, SendStopped
+from .client import AuthorizedPayer, AuthorizationDeclined, AuthorizationNeedsReview, authorize, CheckoutPayer, CheckoutStopped, GuardPayer, GuardStopped, send_check, SendStopped, Credits, Jacket
 
-__all__ = ["AuthorizedPayer", "AuthorizationDeclined", "AuthorizationNeedsReview", "authorize", "CheckoutPayer", "CheckoutStopped", "GuardPayer", "GuardStopped", "send_check", "SendStopped"]
-__version__ = "0.4.0"
+__all__ = ["AuthorizedPayer", "AuthorizationDeclined", "AuthorizationNeedsReview", "authorize", "CheckoutPayer", "CheckoutStopped", "GuardPayer", "GuardStopped", "send_check", "SendStopped", "Credits", "Jacket"]
+__version__ = "0.5.0"
